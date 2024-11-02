@@ -291,22 +291,23 @@ class build_doubleunet(nn.Module):
         self.e1 = encoder1(in_channels=in_channels)
         self.a1 = ASPP(512, 512)
 
-        # Integrate ViT block
-        self.vit = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
-
-        # Add projection layers to match channels
-        self.vit_proj1 = nn.Conv2d(768, 512, kernel_size=1)
-        self.vit_proj2 = nn.Conv2d(768, 512, kernel_size=1)
+        # First ViT Block for the first U-Net encoder
+        self.vit1 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
+        self.vit_proj1 = nn.Conv2d(768, 512, kernel_size=1) # Add projection layers to match channels
+    
 
         self.d1 = None  # Initialize decoder1 later
         self.outc1 = nn.Conv2d(64, num_classes, kernel_size=1)
-
         self.sigmoid = nn.Sigmoid()
         
         # Second U-Net components
         self.e2 = encoder2(in_channels=in_channels)
         self.a2 = ASPP(512, 512)
 
+        # Second ViT Block for the second U-Net encoder
+        self.vit2 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
+        self.vit_proj2 = nn.Conv2d(768, 512, kernel_size=1)
+        
         self.d2 = None  # Initialize decoder2 later
         self.outc2 = nn.Conv2d(64, num_classes, kernel_size=1)
 
@@ -317,11 +318,14 @@ class build_doubleunet(nn.Module):
         if self.d1 is None:
             self.d1 = decoder1(skip_channels1).to(x.device)
         x1 = self.a1(x1)
-        vit_features = self.vit(x)
-        vit_features_proj1 = self.vit_proj1(vit_features)
+        
+        # Pass through the first ViT block
+        vit_features1 = self.vit1(x)
+        vit_features_proj1 = self.vit_proj1(vit_features1)
         x1 = x1 + F.interpolate(vit_features_proj1, size=x1.shape[2:], mode='bilinear', align_corners=False)
-        x1 = self.d1(x1, skip1)
-        y1 = self.outc1(x1)
+        
+        x1 = self.d1(x1, skip1)  # Decode with first decoder
+        y1 = self.outc1(x1)  # First output
 
         # Prepare input for second U-Net
         if self.num_classes == 1:
@@ -341,8 +345,12 @@ class build_doubleunet(nn.Module):
         if self.d2 is None:
             self.d2 = decoder2(skip_channels1, skip_channels2).to(x.device)
         x2 = self.a2(x2)
-        vit_features_proj2 = self.vit_proj2(vit_features)
+        
+        # Pass through the second ViT block
+        vit_features2 = self.vit2(x2_input)
+        vit_features_proj2 = self.vit_proj2(vit_features2)
         x2 = x2 + F.interpolate(vit_features_proj2, size=x2.shape[2:], mode='bilinear', align_corners=False)
+ 
         x2 = self.d2(x2, skip1, skip2)
         y2 = self.outc2(x2)
         return y1, y2

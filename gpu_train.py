@@ -4,27 +4,30 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from model import build_doubleunet  # Ensure model code is updated
-from dataset import MSDDataset  # Save the dataset class in dataset.py
+from model import build_doubleunet  
+from dataset import MSDDataset 
 import numpy as np
 from tqdm import tqdm
 from torch.cuda.amp import autocast, GradScaler
 from torchvision.models import VGG19_BN_Weights
 import matplotlib.pyplot as plt
 from utils import seeding, create_dir, plot_metrics
-from metrics import (DiceLoss, DiceBCELoss, DiceLossMultiClass, precision, recall, F2, dice_score, jac_score, precision_multiclass, recall_multiclass, F2_multiclass, dice_score_multiclass, jac_score_multiclass)
+from metrics import (DiceLoss, DiceBCELoss, DiceLossMultiClass, precision, recall, F2, dice_score, jac_score, precision_multiclass, recall_multiclass, F2_multiclass, dice_score_multiclass, jac_score_multiclass, calculate_overall_metrics)
 import pickle
+
+import warnings
+warnings.filterwarnings("ignore")
 
 # Load task config
 with open('tasks_config.yaml', 'r') as f:
     task_configs = yaml.safe_load(f)
 
 # Training function with mixed precision
-def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, device='cuda', num_classes=1):
+def train_model(model, dataloaders, criterion, optimizer, num_epochs=100, device='cuda', num_classes=1):
     best_loss = float('inf')
-    scaler = GradScaler()  # Initialize GradScaler for mixed precision
+    scaler = GradScaler()  # Initialize GradScaler for mixed precision # key updates
 
-    # Initialize dictionaries to store metrics
+    # Init dic to store metrics
     metrics_history = {
         'train': {
             'Loss': [],
@@ -53,7 +56,7 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, device=
             if phase == 'train':
                 model.train()  # Training mode
             else:
-                model.eval()   # Evaluation mode
+                model.eval()   # Eval mode
 
             batch_losses = []
             batch_dices = []
@@ -166,9 +169,8 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=25, device=
     return model, metrics_history
 
 def main():
-    # Set the seed for reproducibility
     seeding(42)
-    task = 'Task01_BrainTumour'  # Set the task you want to run
+    task = 'Task01_BrainTumour' # Task to train
 
     config = task_configs[task]
     modalities = config['modalities']
@@ -177,14 +179,14 @@ def main():
     loss_function = config['loss_function']
     slice_axis = config['slice_axis']
 
-    # Paths to images and masks
-    image_dir = f'./dataset/{task}/imagesTr'  # Update with actual path
-    mask_dir = f'./dataset/{task}/labelsTr'   # Update with actual path
+    # dataset paths
+    image_dir = f'./dataset/{task}/imagesTr'  
+    mask_dir = f'./dataset/{task}/labelsTr'   
 
     image_paths = sorted(glob.glob(os.path.join(image_dir, '*.nii.gz')))
     mask_paths = sorted(glob.glob(os.path.join(mask_dir, '*.nii.gz')))
 
-    # Split into train and val
+    # Train-Val split
     val_split = 0.2
     num_images = len(image_paths)
     indices = list(range(num_images))
@@ -211,13 +213,13 @@ def main():
 
     dataloaders = {'train': train_loader, 'val': val_loader}
 
-    # Initialize model
+    # Init model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
     model = build_doubleunet(in_channels=in_channels, num_classes=num_classes)
     model = model.to(device)
 
-    # Define loss function
+    # def loss function
     if loss_function == 'CrossEntropy':
         criterion = nn.CrossEntropyLoss()
     elif loss_function == 'BCEWithLogits':
@@ -231,22 +233,22 @@ def main():
     else:
         raise ValueError('Invalid loss function specified')
 
-    # Define optimizer
+    # def optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     # Train the model with mixed precision
     model, metrics_history = train_model(
         model, dataloaders, criterion, optimizer,
-        num_epochs=5, device=device, num_classes=num_classes
+        num_epochs=100, device=device, num_classes=num_classes
     )
 
-    with open('./results/metrics_history.pkl', 'wb') as f:
+    with open(f'./results/{task}_metrics_history.pkl', 'wb') as f:
         pickle.dump(metrics_history, f)
         
     # Plotting
     metric_names = ['Loss', 'Dice', 'Jaccard', 'Precision', 'Recall', 'F2']
     plot_metrics(metrics_history, metric_names)
-    plt.savefig('./results/metrics_plot.png')
+    plt.savefig(f'./results/{task}_metrics_plot.png')
 
 if __name__ == '__main__':
     main()
