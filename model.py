@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import vgg19
 from timm.models.vision_transformer import vit_base_patch16_224
-
+from torchvision.models import vgg19_bn, VGG19_BN_Weights
 class Conv2D(nn.Module):
     def __init__(self, in_c, out_c, kernel_size=3, padding=1, dilation=1, bias=False):
         super().__init__()
@@ -68,6 +68,7 @@ class ViTBlock(nn.Module):
         super().__init__()
         # Load a pre-trained ViT model
         self.vit = vit_base_patch16_224(pretrained=True)
+        # self.vit = vgg19_bn(weights=VGG19_BN_Weights.DEFAULT)
         self.img_size = img_size
         self.patch_size = patch_size
         self.embed_dim = embed_dim

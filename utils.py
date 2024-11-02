@@ -7,6 +7,7 @@ import torch
 from sklearn.utils import shuffle
 from metrics import precision, recall, F2, dice_score, jac_score
 from sklearn.metrics import accuracy_score, confusion_matrix
+import matplotlib.pyplot as plt
 
 """ Seeding the randomness. """
 def seeding(seed):
@@ -71,3 +72,41 @@ def calculate_metrics(y_true, y_pred):
     score_acc = accuracy_score(y_true, y_pred)
 
     return [score_jaccard, score_f1, score_recall, score_precision, score_acc, score_fbeta]
+
+def plot_metrics(metrics_history, metric_names):
+    epochs = range(1, len(metrics_history['train'][metric_names[0]]) + 1)
+
+    num_metrics = len(metric_names)
+    plt.figure(figsize=(5 * num_metrics, 5))
+    for idx, metric_name in enumerate(metric_names):
+        plt.subplot(1, num_metrics, idx + 1)
+        plt.title(f'{metric_name} over Epochs')
+        plt.xlabel('Epoch')
+        plt.ylabel(metric_name)
+
+        # Training metric
+        train_metric_mean = [x[0] for x in metrics_history['train'][metric_name]]
+        train_metric_std = [x[1] for x in metrics_history['train'][metric_name]]
+        plt.plot(epochs, train_metric_mean, label=f'Training {metric_name}')
+        plt.fill_between(
+            epochs,
+            np.array(train_metric_mean) - np.array(train_metric_std),
+            np.array(train_metric_mean) + np.array(train_metric_std),
+            alpha=0.3
+        )
+
+        # Validation metric
+        val_metric_mean = [x[0] for x in metrics_history['val'][metric_name]]
+        val_metric_std = [x[1] for x in metrics_history['val'][metric_name]]
+        plt.plot(epochs, val_metric_mean, label=f'Validation {metric_name}')
+        plt.fill_between(
+            epochs,
+            np.array(val_metric_mean) - np.array(val_metric_std),
+            np.array(val_metric_mean) + np.array(val_metric_std),
+            alpha=0.3
+        )
+
+        plt.legend()
+
+    plt.tight_layout()
+    plt.show()
