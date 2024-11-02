@@ -1,0 +1,69 @@
+Task01_BrainTumour:
+  modalities: null
+  in_channels: 4
+  num_classes: 4
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task02_Heart:
+  modalities: null
+  in_channels: 1
+  num_classes: 2
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task03_Liver:
+  modalities: null
+  in_channels: 1
+  num_classes: 2
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task04_Hippocampus:
+  modalities: null
+  in_channels: 1
+  num_classes: 3
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task05_Prostate:
+  modalities: null
+  in_channels: 2
+  num_classes: 3
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task06_Lung:
+  modalities: null
+  in_channels: 1
+  num_classes: 2
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task07_Pancreas:
+  modalities: null
+  in_channels: 1
+  num_classes: 2
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task08_HepaticVessel:
+  modalities: null
+  in_channels: 1
+  num_classes: 3
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task09_Spleen:
+  modalities: null
+  in_channels: 1
+  num_classes: 2
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
+
+Task10_Colon:
+  modalities: null
+  in_channels: 1
+  num_classes: 2
+  loss_function: 'CrossEntropy'
+  slice_axis: 2
