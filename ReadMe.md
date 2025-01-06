@@ -157,4 +157,6 @@ By selectively including or removing modules, you can observe how each affects s
 
 Additional details and visual comparisons can be found in the `DUVITNET.pdf` file.
 
+---
+
 Thank you for reading. Please feel free to reach out if you have any doubts or questions.
