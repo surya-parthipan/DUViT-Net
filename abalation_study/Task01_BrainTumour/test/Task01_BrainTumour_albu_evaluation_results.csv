@@ -1,0 +1,2 @@
+Configuration,Test Loss,Dice,Jaccard,Precision,Recall,Hausdorff
+"{'use_aspp': False, 'use_se': False, 'use_vit': False, 'vit_for_first': False, 'vit_for_second': False, 'use_albumentations': True}",0.09054471065218632,0.8773788202267426,0.8418109497915094,0.9556753211296521,0.8651775763585017,
