@@ -1,5 +1,8 @@
 # DUViT-Net: Enhancing 2D DoubleU-Net with Vision Transformer for Medical Image Segmentation
 
+
+![DUViT-Net Architecture](images_op/dun.png "DUViT-Net Architecture")
+
 ## Table of Contents
 1. [Introduction](#1-introduction)  
 2. [Project Overview](#2-project-overview)  
