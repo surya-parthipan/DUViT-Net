@@ -1,0 +1,28 @@
+# PyTorch and TorchVision (adjust for GPU/CUDA as needed)
+torch>=1.10.0
+torchvision>=0.11.0
+
+# timm for Vision Transformer
+timm>=0.4.12
+
+# YAML processing
+PyYAML>=5.3
+
+# Scientific computing
+numpy>=1.19.2
+scipy>=1.5.2
+pandas>=1.1.2
+scikit-learn>=0.23.2
+
+# Medical image I/O
+nibabel>=3.2.0
+
+# Image augmentations
+albumentations>=1.0.0
+opencv-python>=4.5.4
+
+tqdm>=4.62.0
+matplotlib>=3.3.0
+
+torch
+torchvision
