@@ -1,68 +1,68 @@
 Task01_BrainTumour:
-  modalities: null
+  modalities: ['FLAIR', 'T1w', 'T1gd', 'T2w']
   in_channels: 4
   num_classes: 4
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task02_Heart:
-  modalities: null
+  modalities: ['MRI']
   in_channels: 1
   num_classes: 2
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task03_Liver:
-  modalities: null
+  modalities: ['CT']
   in_channels: 1
-  num_classes: 2
+  num_classes: 3
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task04_Hippocampus:
-  modalities: null
+  modalities: ['MRI']
   in_channels: 1
   num_classes: 3
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task05_Prostate:
-  modalities: null
+  modalities: ['T2', 'ADC']
   in_channels: 2
   num_classes: 3
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task06_Lung:
-  modalities: null
+  modalities: ['CT']
   in_channels: 1
   num_classes: 2
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task07_Pancreas:
-  modalities: null
+  modalities: ['CT']
   in_channels: 1
   num_classes: 2
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task08_HepaticVessel:
-  modalities: null
+  modalities: ['CT']
   in_channels: 1
   num_classes: 3
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task09_Spleen:
-  modalities: null
+  modalities: ['CT']
   in_channels: 1
   num_classes: 2
   loss_function: 'CrossEntropy'
   slice_axis: 2
 
 Task10_Colon:
-  modalities: null
+  modalities: ['CT']
   in_channels: 1
   num_classes: 2
   loss_function: 'CrossEntropy'

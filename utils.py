@@ -73,7 +73,7 @@ def calculate_metrics(y_true, y_pred):
 
     return [score_jaccard, score_f1, score_recall, score_precision, score_acc, score_fbeta]
 
-def plot_metrics(metrics_history, metric_names):
+def plot_metrics(metrics_history, metric_names, save_path=None):
     epochs = range(1, len(metrics_history['train'][metric_names[0]]) + 1)
 
     num_metrics = len(metric_names)
@@ -109,4 +109,6 @@ def plot_metrics(metrics_history, metric_names):
         plt.legend()
 
     plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
     plt.show()

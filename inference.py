@@ -144,195 +144,11 @@ def get_training_augmentation():
     ])
     return train_transform
 
-def dice_score_multiclass(masks, y_pred, num_classes):
-    """
-    Compute the Dice score for multi-class segmentation.
-    
-    Args:
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-    
-    Returns:
-        float: Dice score averaged over all classes.
-    """
-    dice_scores = []
-    for cls in range(num_classes):
-        masks_cls = (masks == cls).float()
-        y_pred_cls = (y_pred == cls).float()
-        intersection = (masks_cls * y_pred_cls).sum()
-        union = masks_cls.sum() + y_pred_cls.sum()
-        if union == 0:
-            dice_scores.append(1.0)  # Perfect score if both are empty
-        else:
-            dice = (2.0 * intersection) / union
-            dice_scores.append(dice.item())
-    return np.mean(dice_scores)
-
-def jac_score_multiclass(masks, y_pred, num_classes):
-    """
-    Compute the average Jaccard Index (IoU) over all classes.
-
-    Args:
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-
-    Returns:
-        float: Average Jaccard Index over all classes.
-    """
-    jac_scores = []
-    for cls in range(num_classes):
-        masks_cls = (masks == cls).float()
-        y_pred_cls = (y_pred == cls).float()
-        intersection = (masks_cls * y_pred_cls).sum()
-        union = masks_cls.sum() + y_pred_cls.sum() - intersection
-        if union == 0:
-            jac_scores.append(1.0)  # Perfect score if both are empty
-        else:
-            jac = intersection / union
-            jac_scores.append(jac.item())
-    return np.mean(jac_scores)
-
-def precision_multiclass(masks, y_pred, num_classes):
-    """
-    Compute the average precision over all classes.
-
-    Args:
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-
-    Returns:
-        float: Average precision over all classes.
-    """
-    precisions = []
-    for cls in range(num_classes):
-        masks_cls = (masks == cls).float()
-        y_pred_cls = (y_pred == cls).float()
-        true_positive = (y_pred_cls * masks_cls).sum()
-        predicted_positive = y_pred_cls.sum()
-        if predicted_positive == 0:
-            precisions.append(1.0)  # Assuming perfect precision when no positive predictions
-        else:
-            precision = true_positive / predicted_positive
-            precisions.append(precision.item())
-    return np.mean(precisions)
-
-
-def recall_multiclass(masks, y_pred, num_classes):
-    """
-    Compute the average recall over all classes.
-
-    Args:
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-
-    Returns:
-        float: Average recall over all classes.
-    """
-    recalls = []
-    for cls in range(num_classes):
-        masks_cls = (masks == cls).float()
-        y_pred_cls = (y_pred == cls).float()
-        true_positive = (y_pred_cls * masks_cls).sum()
-        actual_positive = masks_cls.sum()
-        if actual_positive == 0:
-            recalls.append(1.0)  # Assuming perfect recall when no actual positives
-        else:
-            recall = true_positive / actual_positive
-            recalls.append(recall.item())
-    return np.mean(recalls)
-
-def F2_multiclass(masks, y_pred, num_classes):
-    """
-    Compute the average F2 score over all classes.
-
-    Args:
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-
-    Returns:
-        float: Average F2 score over all classes.
-    """
-    f2_scores = []
-    for cls in range(num_classes):
-        masks_cls = (masks == cls).float()
-        y_pred_cls = (y_pred == cls).float()
-        true_positive = (y_pred_cls * masks_cls).sum()
-        predicted_positive = y_pred_cls.sum()
-        actual_positive = masks_cls.sum()
-        
-        if predicted_positive == 0:
-            precision = 1.0
-        else:
-            precision = true_positive / predicted_positive
-        
-        if actual_positive == 0:
-            recall = 1.0
-        else:
-            recall = true_positive / actual_positive
-        
-        if precision + recall == 0:
-            f2 = 0.0
-        else:
-            f2 = (5 * precision * recall) / (4 * precision + recall)
-        f2_scores.append(f2.item())
-    return np.mean(f2_scores)
-
-def iou_score_multiclass(y_pred, masks, num_classes):
-    """
-    Compute the average Intersection over Union (IoU) over all classes.
-
-    Args:
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-
-    Returns:
-        float: Average IoU over all classes.
-    """
-    iou_scores = []
-    for cls in range(num_classes):
-        y_pred_cls = (y_pred == cls).float()
-        masks_cls = (masks == cls).float()
-        intersection = (y_pred_cls * masks_cls).sum()
-        union = y_pred_cls.sum() + masks_cls.sum() - intersection
-        if union == 0:
-            iou_scores.append(1.0)  # Perfect score if both are empty
-        else:
-            iou = intersection / union
-            iou_scores.append(iou.item())
-    return np.mean(iou_scores)
-
-def hausdorff_distance_multiclass(y_pred, masks, num_classes):
-    """
-    Compute the average Hausdorff Distance over all classes.
-
-    Args:
-        y_pred (torch.Tensor): Predicted masks of shape [batch_size, H, W], with integer class labels.
-        masks (torch.Tensor): Ground truth masks of shape [batch_size, H, W], with integer class labels.
-        num_classes (int): Number of classes.
-
-    Returns:
-        float: Average Hausdorff Distance over all classes.
-    """
-    hd_values = []
-    for cls in range(1, num_classes):  # Exclude background if class 0 is background
-        y_pred_cls = (y_pred == cls).float()
-        masks_cls = (masks == cls).float()
-        hd_value = hausdorff_distance(y_pred_cls, masks_cls)
-        hd_values.append(hd_value)
-    return np.nanmean(hd_values)
-
 # Define the evaluation function
 def evaluate_model(model, dataloader, criterion, device, num_classes):
     model.eval()
     batch_losses = []
-    # batch_metrics = {'Dice': [], 'Jaccard': [], 'Precision': [], 'Recall': [], 'F2': [], 'IoU': [], 'Hausdorff': []}
-    batch_metrics = {'Dice': [], 'Jaccard': [], 'Precision': [], 'Recall': [], 'Hausdorff': []}
+    batch_metrics = {'Dice': [], 'Jaccard': [], 'Precision': [], 'Recall': [], 'F2': [], 'IoU': [], 'Hausdorff': []}
 
     with torch.no_grad():
         for inputs, masks in tqdm(dataloader, desc='Testing'):
@@ -340,7 +156,6 @@ def evaluate_model(model, dataloader, criterion, device, num_classes):
             masks = masks.to(device)
 
             y1_pred, y2_pred = model(inputs)
-            # print(f"y2: {y2_pred} \n shape: {y2_pred.shape}")
             if num_classes == 1:
                 masks = masks.float()
                 loss = criterion(y2_pred, masks)
@@ -357,37 +172,31 @@ def evaluate_model(model, dataloader, criterion, device, num_classes):
                 jaccard = jac_score(masks.view(-1), y_pred.view(-1))
                 precision_val = precision(masks.view(-1), y_pred.view(-1))
                 recall_val = recall(masks.view(-1), y_pred.view(-1))
-                # f2_val = F2(masks.view(-1), y_pred.view(-1))
-                # iou = iou_score(y_pred, masks)
+                f2_val = F2(masks.view(-1), y_pred.view(-1))
+                iou = iou_score(y_pred, masks)
                 hd_value = hausdorff_distance(y_pred.squeeze(1), masks.squeeze(1))
             else:
                 y_pred = y2_pred
-                # Apply softmax to get probabilities
-                y_pred_probs = torch.softmax(y2_pred, dim=1)  # Shape: [batch_size, num_classes, H, W]
-                # Get predicted class labels
-                y_pred = torch.argmax(y_pred_probs, dim=1)
-                
                 dice = dice_score_multiclass(masks, y_pred, num_classes)
                 jaccard = jac_score_multiclass(masks, y_pred, num_classes)
                 precision_val = precision_multiclass(masks, y_pred, num_classes)
                 recall_val = recall_multiclass(masks, y_pred, num_classes)
-                # f2_val = F2_multiclass(masks, y_pred, num_classes)
-                # iou = iou_score_multiclass(y_pred, masks, num_classes)
-                # hd_values = []
-                # for cls in range(1, num_classes):
-                #     y_pred_cls = torch.argmax(y_pred, dim=1) == cls
-                #     masks_cls = masks == cls
-                #     hd_value_cls = hausdorff_distance(y_pred_cls.float(), masks_cls.float())
-                #     hd_values.append(hd_value_cls)
-                # hd_value = np.nanmean(hd_values)
-                hd_value = hausdorff_distance_multiclass(y_pred, masks, num_classes)                
+                f2_val = F2_multiclass(masks, y_pred, num_classes)
+                iou = iou_score_multiclass(y_pred, masks, num_classes)
+                hd_values = []
+                for cls in range(1, num_classes):
+                    y_pred_cls = torch.argmax(y_pred, dim=1) == cls
+                    masks_cls = masks == cls
+                    hd_value_cls = hausdorff_distance(y_pred_cls.float(), masks_cls.float())
+                    hd_values.append(hd_value_cls)
+                hd_value = np.nanmean(hd_values)
 
             batch_metrics['Dice'].append(dice.item())
             batch_metrics['Jaccard'].append(jaccard.item())
             batch_metrics['Precision'].append(precision_val.item())
             batch_metrics['Recall'].append(recall_val.item())
-            # batch_metrics['F2'].append(f2_val.item())
-            # batch_metrics['IoU'].append(iou.item())
+            batch_metrics['F2'].append(f2_val.item())
+            batch_metrics['IoU'].append(iou.item())
             batch_metrics['Hausdorff'].append(hd_value)
 
     test_loss = np.mean(batch_losses)
@@ -452,7 +261,7 @@ def main(task):
     # Load the test data paths
     # Use the same random_state as in training to get the same test set
     train_val_image_paths, test_image_paths, train_val_mask_paths, test_mask_paths = train_test_split(
-        image_paths, mask_paths, test_size=0.10, random_state=42)
+        image_paths, mask_paths, test_size=0.15, random_state=42)
     
     test_transform = get_training_augmentation()
 

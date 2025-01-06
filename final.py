@@ -14,12 +14,15 @@ import pickle
 import nibabel as nib
 from torchvision.models import vgg19
 from torchvision.models import resnet50
+import timm
 from timm.models.vision_transformer import vit_base_patch16_224
 import albumentations as A
 from utils import seeding, create_dir, plot_metrics
 from metrics import (
     DiceLoss, DiceBCELoss, DiceLossMultiClass, precision, recall, F2, dice_score, jac_score,
-    precision_multiclass, recall_multiclass, F2_multiclass, dice_score_multiclass, jac_score_multiclass, hausdorff_distance, iou_score, iou_score_multiclass, hd95, normalized_surface_dice)
+    precision_multiclass, recall_multiclass, F2_multiclass, dice_score_multiclass, jac_score_multiclass, hausdorff_distance, iou_score, iou_score_multiclass, hd95,
+    normalized_surface_dice
+)
 from sklearn.model_selection import train_test_split
 
 # Load task config
@@ -35,13 +38,30 @@ class MSDDataset(Dataset):
         self.slice_axis = slice_axis
         self.transform = transform  # Albumentations transform
 
+        # Precompute indices of slices with relevant information
+        self.indices = []
+        for idx in range(len(self.image_paths)):
+            mask = nib.load(self.mask_paths[idx]).get_fdata()
+            # Sum over axes other than the slice axis to find slices with non-zero masks
+            if self.slice_axis == 0:
+                slice_sums = mask.sum(axis=(1,2))
+            elif self.slice_axis == 1:
+                slice_sums = mask.sum(axis=(0,2))
+            else:
+                slice_sums = mask.sum(axis=(0,1))
+            # Get indices of slices with non-zero sum
+            relevant_slices = np.where(slice_sums > 0)[0]
+            # Store (volume index, slice index) pairs
+            self.indices.extend([(idx, slice_idx) for slice_idx in relevant_slices])
+
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.indices)
 
     def __getitem__(self, idx):
+        volume_idx, slice_idx = self.indices[idx]
         # Load image and mask
-        img = nib.load(self.image_paths[idx]).get_fdata()
-        mask = nib.load(self.mask_paths[idx]).get_fdata()
+        img = nib.load(self.image_paths[volume_idx]).get_fdata()
+        mask = nib.load(self.mask_paths[volume_idx]).get_fdata()
 
         # Handle modalities (channels)
         if img.ndim == 4:
@@ -54,19 +74,24 @@ class MSDDataset(Dataset):
             img = img[..., np.newaxis]
             channels = 1
 
-        # Per-modality normalization
+        # Per-modality standardization (z-score normalization)
         for c in range(channels):
             modality = img[..., c]
-            img[..., c] = (modality - modality.min()) / (modality.max() - modality.min() + 1e-8)
+            mean = modality.mean()
+            std = modality.std() + 1e-8  # Add epsilon to avoid division by zero
+            img[..., c] = (modality - mean) / std
 
-        # Extract a slice along the specified axis
-        mid_slice = img.shape[self.slice_axis] // 2
-        img = np.take(img, mid_slice, axis=self.slice_axis)
-        mask = np.take(mask, mid_slice, axis=self.slice_axis)
+        # Extract the slice along the specified axis
+        img = np.take(img, slice_idx, axis=self.slice_axis)
+        mask = np.take(mask, slice_idx, axis=self.slice_axis)
 
         # Adjust mask labels (e.g., for binary segmentation)
-        mask = np.where(mask > 0, 1, 0)
         mask = mask.astype(np.int64)
+        if mask.max() > 0:
+            mask = np.where(mask > 0, 1, 0)
+        else:
+            # If mask is empty, return zeros (should not happen due to pre-selection)
+            mask = np.zeros_like(mask, dtype=np.int64)
 
         # Handle dimensions after slicing
         if img.ndim == 2:
@@ -132,12 +157,12 @@ def get_training_augmentation():
             shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=0.5,
             border_mode=0
         ),
-        A.ElasticTransform(alpha=120, sigma=120 * 0.05, p=0.5),
+        A.ElasticTransform(alpha=120, sigma=120 * 0.05, alpha_affine=120 * 0.03, p=0.5),
         A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-        A.OpticalDistortion(distort_limit=0.05, shift_limit=0.05, p=0.5),
-        A.RandomBrightnessContrast(p=0.5),
-        A.GaussNoise(p=0.2),
         A.CoarseDropout(max_holes=8, max_height=32, max_width=32, p=0.5),
+        # Intensity augmentations can be added cautiously
+        # A.RandomBrightnessContrast(p=0.5),
+        # A.GaussNoise(p=0.2),
     ])
     return train_transform
 
@@ -151,9 +176,7 @@ class Conv2D(nn.Module):
             dilation=dilation,
             bias=bias
         )
-        # self.bn = nn.BatchNorm2d(out_c)
-        self.bn = nn.GroupNorm(num_groups=32, num_channels=out_c)
-        # self.bn = nn.InstanceNorm2d(out_c)
+        self.bn = nn.BatchNorm2d(out_c)
         self.relu = nn.ReLU(inplace=True)
         # Initialize weights
         nn.init.kaiming_normal_(self.conv.weight, mode='fan_out', nonlinearity='relu')
@@ -211,43 +234,6 @@ class ASPP(nn.Module):
 
         x = torch.cat([x1, x2, x3, x4, x5], dim=1)
         x = self.conv1(x)
-        return x
-
-class ViTBlock(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, embed_dim=768, in_channels=3):
-        super().__init__()
-        self.vit = vit_base_patch16_224(pretrained=True)
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.embed_dim = embed_dim
-
-        # Modify the input projection layer
-        if in_channels != 3:
-            self.vit.patch_embed.proj = nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=embed_dim,
-                kernel_size=patch_size,
-                stride=patch_size
-            )
-            nn.init.kaiming_normal_(self.vit.patch_embed.proj.weight, mode='fan_out', nonlinearity='relu')
-            if self.vit.patch_embed.proj.bias is not None:
-                nn.init.zeros_(self.vit.patch_embed.proj.bias)
-
-    def forward(self, x):
-        # Resize input
-        x = F.interpolate(x, size=(self.img_size, self.img_size), mode='bilinear', align_corners=False)
-        # Extract features
-        x = self.vit.patch_embed(x)
-        cls_token = self.vit.cls_token.expand(x.shape[0], -1, -1)
-        x = torch.cat((cls_token, x), dim=1)
-        x = x + self.vit.pos_embed
-        x = self.vit.pos_drop(x)
-        x = self.vit.blocks(x)
-        x = self.vit.norm(x)
-        # Exclude class token and reshape
-        x = x[:, 1:, :].transpose(1, 2)
-        h = w = self.img_size // self.patch_size
-        x = x.view(-1, self.embed_dim, h, w)
         return x
 
 class ConvBlock(nn.Module):
@@ -434,7 +420,7 @@ class BuildDoubleUNet(nn.Module):
 
         # ViT block
         # First ViT Block for the first U-Net encoder
-        self.vit1 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
+        self.vit1 = ViTBlock(img_size=256, patch_size=16, embed_dim=768, in_channels=in_channels)
         self.vit_proj1 = nn.Conv2d(768, 512, kernel_size=1) 
 
         # First decoder
@@ -447,7 +433,7 @@ class BuildDoubleUNet(nn.Module):
         self.a2 = ASPP(512, 512)
 
         # Second ViT Block for the second U-Net encoder
-        self.vit2 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
+        self.vit2 = ViTBlock(img_size=256, patch_size=16, embed_dim=768, in_channels=in_channels)
         self.vit_proj2 = nn.Conv2d(768, 512, kernel_size=1)
 
         self.d2 = None  # Initialized later based on skip channels
@@ -493,6 +479,113 @@ class BuildDoubleUNet(nn.Module):
         x2 = self.d2(x2, skip1, skip2)
         y2 = self.outc2(x2)
         return y1, y2
+
+class ViTBlock(nn.Module):
+    def __init__(self, img_size=256, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, in_channels=3):
+        super().__init__()
+        self.img_size = img_size
+
+        # Initialize ViT model with specified image size and input channels
+        self.vit = timm.models.vision_transformer.VisionTransformer(
+            img_size=img_size,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            depth=depth,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            qkv_bias=True,
+            num_classes=0,  # We don't need the classifier head
+            in_chans=in_channels,
+        )
+
+        # Load pre-trained weights
+        pretrained_model = timm.create_model('vit_base_patch16_224', pretrained=True)
+        pretrained_state_dict = pretrained_model.state_dict()
+
+        # Adjust the patch embedding layer weights
+        self.modify_patch_embed(pretrained_state_dict, in_channels)
+
+        # Interpolate positional embeddings
+        self.interpolate_pos_embed(pretrained_state_dict)
+
+        # Load the adjusted state dictionary into the model
+        self.vit.load_state_dict(pretrained_state_dict, strict=False)
+
+    def modify_patch_embed(self, state_dict, in_channels):
+        # Get the pre-trained weights
+        old_weight = state_dict['patch_embed.proj.weight']  # Shape: [768, 3, 16, 16]
+
+        # Initialize a new weight tensor with the desired shape, matching the dtype and device
+        new_weight = torch.zeros((768, in_channels, 16, 16), dtype=old_weight.dtype, device=old_weight.device)
+
+        if in_channels == 3:
+            # Same number of channels; copy weights directly
+            new_weight.copy_(old_weight)
+        elif in_channels > 3:
+            # Copy the first 3 channels
+            new_weight[:, :3, :, :] = old_weight
+            # Initialize the additional channels (e.g., with Kaiming normal initialization)
+            nn.init.kaiming_normal_(new_weight[:, 3:, :, :], mode='fan_out', nonlinearity='relu')
+        elif in_channels == 1:
+            # Single channel; average the weights across the input channels
+            averaged_weight = old_weight.mean(dim=1, keepdim=True)  # Shape: [768, 1, 16, 16]
+            new_weight.copy_(averaged_weight)
+        elif in_channels == 2:
+            # Two channels; copy the first two channels from the pre-trained weights
+            new_weight[:, :2, :, :] = old_weight[:, :2, :, :]
+        else:
+            raise ValueError(f"Unsupported number of input channels: {in_channels}")
+
+        # Replace the weight in the state dictionary
+        state_dict['patch_embed.proj.weight'] = new_weight
+
+    def interpolate_pos_embed(self, state_dict):
+        pos_embed_checkpoint = state_dict['pos_embed']
+        embedding_size = pos_embed_checkpoint.shape[-1]
+
+        # Handle tuple patch_size
+        if isinstance(self.vit.patch_embed.patch_size, tuple):
+            patch_size = self.vit.patch_embed.patch_size[0]
+        else:
+            patch_size = self.vit.patch_embed.patch_size
+
+        num_patches = (self.img_size // patch_size) ** 2
+        num_extra_tokens = self.vit.pos_embed.shape[-2] - num_patches
+
+        # Height (== width) for the checkpoint position embedding
+        orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
+        # Height (== width) of new position embedding
+        new_size = int(num_patches ** 0.5)
+        # Class_token and dist_token are kept unchanged
+        extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
+        # Only the position tokens are interpolated
+        pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+        pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
+        pos_tokens = F.interpolate(
+            pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
+        pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(-1, new_size * new_size, embedding_size)
+        new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
+        state_dict['pos_embed'] = new_pos_embed
+
+    def forward(self, x):
+        # Ensure input size matches 'img_size'
+        if x.size(2) != self.img_size or x.size(3) != self.img_size:
+            x = F.interpolate(x, size=(self.img_size, self.img_size), mode='bilinear', align_corners=False)
+
+        # ViT forward pass
+        x = self.vit.patch_embed(x)  # [B, num_patches, embed_dim]
+        cls_token = self.vit.cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_token, x), dim=1)  # [B, num_patches + 1, embed_dim]
+        x = self.vit.pos_drop(x + self.vit.pos_embed)
+        x = self.vit.blocks(x)
+        x = self.vit.norm(x)
+
+        # Remove class token and reshape
+        x = x[:, 1:, :]
+        B, N, C = x.shape
+        H = W = int(N ** 0.5)
+        x = x.transpose(1, 2).contiguous().view(B, C, H, W)
+        return x
 
 def train_model(model, dataloaders, criterion, optimizer, num_epochs, device, num_classes, save_path, task, use_albumentations):
     best_loss = float('inf')
@@ -596,12 +689,8 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs, device, nu
 def main(task, use_albumentations):
     seeding(42)
     
-    # task = 'Task01_BrainTumour'
-    # task = 'Task03_Liver'
-    save_path = f'./results/2dmodel'
+    save_path = f'./results/2dmodel_{task}'
     create_dir(save_path)
-    
-    # use_albumentations = False
 
     config = task_configs[task]
     modalities = config['modalities']
@@ -612,8 +701,6 @@ def main(task, use_albumentations):
 
     # Convert modalities to indices if they are strings
     if modalities is not None and isinstance(modalities[0], str):
-        # Assuming modalities are ordered and you know their indices
-        # For example, mapping modality names to indices
         modality_name_to_index = {
             'FLAIR': 0,
             'T1w': 1,
@@ -623,7 +710,6 @@ def main(task, use_albumentations):
             'CT': 0,
             'T2': 0,
             'ADC': 1
-            # Add other modality mappings as needed
         }
         modalities = [modality_name_to_index[m] for m in modalities]
 
@@ -635,15 +721,13 @@ def main(task, use_albumentations):
     mask_paths = sorted(glob.glob(os.path.join(mask_dir, '*.nii.gz')))
 
     # Train-Val split
-    # train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(image_paths, mask_paths, test_size=0.2, random_state=42)
-    train_val_image_paths, test_image_paths, train_val_mask_paths, test_mask_paths = train_test_split(
-        image_paths, mask_paths, test_size=0.15, random_state=42)
     train_image_paths, val_image_paths, train_mask_paths, val_mask_paths = train_test_split(
-        train_val_image_paths, train_val_mask_paths, test_size=0.1875, random_state=42)
+        image_paths, mask_paths, test_size=0.2, random_state=42
+    )
 
     # Define transforms
     train_transform = get_training_augmentation() if use_albumentations else None
-    
+
     # Create Datasets
     train_dataset = MSDDataset(
         train_image_paths, train_mask_paths,
@@ -655,12 +739,9 @@ def main(task, use_albumentations):
         modalities=modalities, slice_axis=slice_axis,
         transform=None  # No augmentation for validation
     )
-    # Create Datasets
-    # train_dataset = MSDDataset(train_image_paths, train_mask_paths, modalities=modalities, slice_axis=slice_axis)
-    # val_dataset = MSDDataset(val_image_paths, val_mask_paths, modalities=modalities, slice_axis=slice_axis)
 
     # Create Dataloaders
-    batch_size = 4
+    batch_size = 4  # Adjust based on your GPU memory
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     dataloaders = {'train': train_loader, 'val': val_loader}
@@ -689,7 +770,6 @@ def main(task, use_albumentations):
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
     # Train the model
-    print(f"Training the model on {task}....")
     model, metrics_history = train_model(
         model, dataloaders, criterion, optimizer,
         num_epochs=2, device=device, num_classes=num_classes,
@@ -717,20 +797,8 @@ def main(task, use_albumentations):
     with open(f'{save_path}/{task}_metrics_history_albu_{use_albumentations}.pkl', 'wb') as f:
         pickle.dump(metrics_history, f)
 
-    # Plot metrics
-    # metric_names = ['Loss', 'Dice', 'Jaccard', 'Precision', 'Recall', 'F2']
-    # plot_metrics(metrics_history, metric_names)
-    # plt.savefig(f'./results_new/{task}_metrics_plot.png')
-    # plt.close()
-
 if __name__ == '__main__':
-    # main(task='Task01_BrainTumour', use_albumentations=True)
-    main(task='Task01_BrainTumour', use_albumentations=False)
-    # main(task='Task02_Heart', use_albumentations=False)
-    # main(task='Task02_Heart', use_albumentations=True)
-    # main(task='Task03_Liver', use_albumentations=False)
-    # main(task='Task03_Liver', use_albumentations=True)
-    # main(task='Task04_Hippocampus', use_albumentations=False)
-    # main(task='Task04_Hippocampus', use_albumentations=True)
-    # main(task='Task05_Prostate', use_albumentations=False)
-    # main(task='Task05_Prostate', use_albumentations=True)
+    # tasks = ['Task01_BrainTumour', 'Task02_Heart', 'Task03_Liver']
+    tasks = ['Task02_Heart']
+    for task in tasks:
+        main(task=task, use_albumentations=True)

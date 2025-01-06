@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -17,8 +18,7 @@ from torchvision.models import resnet50
 from timm.models.vision_transformer import vit_base_patch16_224
 import albumentations as A
 from utils import seeding, create_dir, plot_metrics
-from metrics import (
-    DiceLoss, DiceBCELoss, DiceLossMultiClass, precision, recall, F2, dice_score, jac_score,
+from metrics import (DiceLoss, DiceBCELoss, DiceLossMultiClass, precision, recall, F2, dice_score, jac_score,
     precision_multiclass, recall_multiclass, F2_multiclass, dice_score_multiclass, jac_score_multiclass, hausdorff_distance, iou_score, iou_score_multiclass, hd95, normalized_surface_dice)
 from sklearn.model_selection import train_test_split
 
@@ -423,35 +423,54 @@ class Decoder2(nn.Module):
         return x
 
 class BuildDoubleUNet(nn.Module):
-    def __init__(self, in_channels=3, num_classes=1): 
+    def __init__(self, in_channels=3, num_classes=1, 
+                 use_aspp=True, use_se=True, use_vit=True, 
+                 vit_for_first=True, vit_for_second=True): 
+        """
+        Double U-Net with optional ASPP, SE, and ViT blocks.
+        
+        Args:
+            in_channels (int): Number of input channels.
+            num_classes (int): Number of output channels.
+            use_aspp (bool): Whether to use ASPP blocks.
+            use_se (bool): Whether to use Squeeze-Excitation blocks.
+            use_vit (bool): Whether to use Vision Transformer.
+            vit_for_first (bool): Use ViT in the first U-Net.
+            vit_for_second (bool): Use ViT in the second U-Net.
+        """
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
+        self.use_aspp = use_aspp
+        self.use_se = use_se
+        self.use_vit = use_vit
+        self.vit_for_first = vit_for_first
+        self.vit_for_second = vit_for_second
 
         # First U-Net components
         self.e1 = Encoder1(in_channels=in_channels)
-        self.a1 = ASPP(512, 512)
-
-        # ViT block
-        # First ViT Block for the first U-Net encoder
-        self.vit1 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
-        self.vit_proj1 = nn.Conv2d(768, 512, kernel_size=1) 
-
-        # First decoder
+        if self.use_aspp:
+            self.a1 = ASPP(512, 512)
         self.d1 = None  # Initialized later based on skip channels
         self.outc1 = nn.Conv2d(64, num_classes, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
 
+        # ViT block for the first U-Net
+        if self.use_vit and self.vit_for_first:
+            self.vit1 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
+            self.vit_proj1 = nn.Conv2d(768, 512, kernel_size=1)
+
         # Second U-Net components
         self.e2 = Encoder2(in_channels=in_channels)
-        self.a2 = ASPP(512, 512)
-
-        # Second ViT Block for the second U-Net encoder
-        self.vit2 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
-        self.vit_proj2 = nn.Conv2d(768, 512, kernel_size=1)
-
+        if self.use_aspp:
+            self.a2 = ASPP(512, 512)
         self.d2 = None  # Initialized later based on skip channels
         self.outc2 = nn.Conv2d(64, num_classes, kernel_size=1)
+
+        # ViT block for the second U-Net
+        if self.use_vit and self.vit_for_second:
+            self.vit2 = ViTBlock(img_size=224, patch_size=16, embed_dim=768, in_channels=in_channels)
+            self.vit_proj2 = nn.Conv2d(768, 512, kernel_size=1)
 
     def forward(self, x):
         # First U-Net
@@ -459,12 +478,12 @@ class BuildDoubleUNet(nn.Module):
         skip_channels1 = [s.size(1) for s in skip1]
         if self.d1 is None:
             self.d1 = Decoder1(skip_channels1).to(x.device)
-        x1 = self.a1(x1)
-        # Pass through the first ViT block
-        vit_features1 = self.vit1(x)
-        vit_features_proj1 = self.vit_proj1(vit_features1)
-        
-        x1 = x1 + F.interpolate(vit_features_proj1, size=x1.shape[2:], mode='bilinear', align_corners=False)
+        if self.use_aspp:
+            x1 = self.a1(x1)
+        if self.use_vit and self.vit_for_first:
+            vit_features1 = self.vit1(x)
+            vit_features_proj1 = self.vit_proj1(vit_features1)
+            x1 = x1 + F.interpolate(vit_features_proj1, size=x1.shape[2:], mode='bilinear', align_corners=False)
         x1 = self.d1(x1, skip1)
         y1 = self.outc1(x1)
 
@@ -483,18 +502,17 @@ class BuildDoubleUNet(nn.Module):
         skip_channels2 = [s.size(1) for s in skip2]
         if self.d2 is None:
             self.d2 = Decoder2(skip_channels1, skip_channels2).to(x.device)
-        x2 = self.a2(x2)
-
-        # Pass through the second ViT block
-        vit_features2 = self.vit2(x2_input)
-        vit_features_proj2 = self.vit_proj2(vit_features2)
-        
-        x2 = x2 + F.interpolate(vit_features_proj2, size=x2.shape[2:], mode='bilinear', align_corners=False)
+        if self.use_aspp:
+            x2 = self.a2(x2)
+        if self.use_vit and self.vit_for_second:
+            vit_features2 = self.vit2(x2_input)
+            vit_features_proj2 = self.vit_proj2(vit_features2)
+            x2 = x2 + F.interpolate(vit_features_proj2, size=x2.shape[2:], mode='bilinear', align_corners=False)
         x2 = self.d2(x2, skip1, skip2)
         y2 = self.outc2(x2)
         return y1, y2
 
-def train_model(model, dataloaders, criterion, optimizer, num_epochs, device, num_classes, save_path, task, use_albumentations):
+def train_model(model, dataloaders, criterion, optimizer, num_epochs, device, num_classes, save_path, task, use_aspp, use_se, use_vit, vit_for_first, vit_for_second, use_albumentations):
     best_loss = float('inf')
     scaler = GradScaler()
 
@@ -587,18 +605,18 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs, device, nu
             if phase == 'val' and epoch_loss < best_loss:
                 best_loss = epoch_loss
                 create_dir('models')
-                torch.save(model.state_dict(), f'{save_path}/{task}_best_model_albu_{use_albumentations}.pth')
+                # torch.save(model.state_dict(), f'{save_path}/{task}_best_model_albu_{use_albumentations}.pth')
+                torch.save(model, f'{save_path}/best_model_aspp_{use_aspp}_se_{use_se}_vit_{use_vit}_vit1st_{vit_for_first}_vit2nd_{vit_for_second}_albu_{use_albumentations}.pth')
+                
 
     print('Training complete')
     print(f'Best val Loss: {best_loss:.4f}')
     return model, metrics_history
 
-def main(task, use_albumentations):
+def main(task, use_aspp, use_se, use_vit, vit_for_first, vit_for_second, use_albumentations):
     seeding(42)
     
-    # task = 'Task01_BrainTumour'
-    # task = 'Task03_Liver'
-    save_path = f'./results/2dmodel'
+    save_path = f'./abalation_study/{task}/train'
     create_dir(save_path)
     
     # use_albumentations = False
@@ -667,8 +685,19 @@ def main(task, use_albumentations):
 
     # Initialize model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = 'cpu'
     print(f'Using device: {device}')
-    model = BuildDoubleUNet(in_channels=in_channels, num_classes=num_classes).to(device)
+    # model = BuildDoubleUNet(in_channels=in_channels, num_classes=num_classes).to(device)
+    # Initialize model
+    model = BuildDoubleUNet(
+        in_channels=in_channels, 
+        num_classes=num_classes,
+        use_aspp=use_aspp, 
+        use_se=use_se, 
+        use_vit=use_vit,
+        vit_for_first=vit_for_first, 
+        vit_for_second=vit_for_second
+    ).to(device)
 
     # Define loss function
     loss_functions = {
@@ -685,15 +714,19 @@ def main(task, use_albumentations):
     # Define optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     # Define scheduler (optional)
-    from torch.optim.lr_scheduler import ReduceLROnPlateau
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
     # Train the model
     print(f"Training the model on {task}....")
     model, metrics_history = train_model(
         model, dataloaders, criterion, optimizer,
-        num_epochs=2, device=device, num_classes=num_classes,
-        save_path=save_path, task=task, use_albumentations=use_albumentations
+        num_epochs=100, device=device, num_classes=num_classes,
+        save_path=save_path, task=task, use_aspp=use_aspp, 
+        use_se=use_se, 
+        use_vit=use_vit,
+        vit_for_first=vit_for_first, 
+        vit_for_second=vit_for_second,
+        use_albumentations=use_albumentations
     )
 
     print(metrics_history)
@@ -711,10 +744,10 @@ def main(task, use_albumentations):
         df.to_csv(filename, index=False)
         print(f"Metrics history saved to {filename}")
     
-    save_metrics_to_csv(metrics_history, f"{save_path}/{task}_metrics_history_albu_{use_albumentations}.csv")
+    save_metrics_to_csv(metrics_history, f"{save_path}/metrics_aspp_{use_aspp}_se_{use_se}_vit_{use_vit}_vit1st_{vit_for_first}_vit2nd_{vit_for_second}_albu_{use_albumentations}.csv")
 
     # Save metrics
-    with open(f'{save_path}/{task}_metrics_history_albu_{use_albumentations}.pkl', 'wb') as f:
+    with open(f'{save_path}/metrics_aspp_{use_aspp}_se_{use_se}_vit_{use_vit}_vit1st_{vit_for_first}_vit2nd_{vit_for_second}_albu_{use_albumentations}.pkl', 'wb') as f:
         pickle.dump(metrics_history, f)
 
     # Plot metrics
@@ -724,13 +757,22 @@ def main(task, use_albumentations):
     # plt.close()
 
 if __name__ == '__main__':
-    # main(task='Task01_BrainTumour', use_albumentations=True)
-    main(task='Task01_BrainTumour', use_albumentations=False)
-    # main(task='Task02_Heart', use_albumentations=False)
-    # main(task='Task02_Heart', use_albumentations=True)
-    # main(task='Task03_Liver', use_albumentations=False)
-    # main(task='Task03_Liver', use_albumentations=True)
-    # main(task='Task04_Hippocampus', use_albumentations=False)
-    # main(task='Task04_Hippocampus', use_albumentations=True)
-    # main(task='Task05_Prostate', use_albumentations=False)
-    # main(task='Task05_Prostate', use_albumentations=True)
+    # Baseline U-Net
+    # main(task='Task01_BrainTumour', use_aspp=False, use_se=False, use_vit=False, vit_for_first=False, vit_for_second=False, use_albumentations=False) # Done
+    # main(task='Task01_BrainTumour', use_aspp=False, use_se=False, use_vit=False, vit_for_first=False, vit_for_second=False, use_albumentations=True) #Done
+
+    # # Double U-Net without ASPP
+    # main(task='Task01_BrainTumour', use_aspp=False, use_se=True, use_vit=False, vit_for_first=False, vit_for_second=False, use_albumentations=True) # Done
+    # main(task='Task01_BrainTumour', use_aspp=False, use_se=True, use_vit=False, vit_for_first=False, vit_for_second=False, use_albumentations=False) # Done
+
+    # # # Double U-Net with ASPP
+    # main(task='Task01_BrainTumour', use_aspp=True, use_se=True, use_vit=False, vit_for_first=False, vit_for_second=False, use_albumentations=True) # done
+    # main(task='Task01_BrainTumour', use_aspp=True, use_se=True, use_vit=False, vit_for_first=False, vit_for_second=False, use_albumentations=False) # done
+    
+    # # # Double U-Net + ViT on First U-Net
+    # main(task='Task01_BrainTumour', use_aspp=True, use_se=True, use_vit=True, vit_for_first=True, vit_for_second=False, use_albumentations=True) #Done
+    main(task='Task01_BrainTumour', use_aspp=True, use_se=True, use_vit=True, vit_for_first=True, vit_for_second=False, use_albumentations=False) # running
+
+    # # # Full Model with ViT on Both U-Nets
+    # main(task='Task01_BrainTumour', use_aspp=True, use_se=True, use_vit=True, vit_for_first=True, vit_for_second=True, use_albumentations=False) #Done
+    # main(task='Task01_BrainTumour', use_aspp=True, use_se=True, use_vit=True, vit_for_first=True, vit_for_second=True, use_albumentations=True) #Done
