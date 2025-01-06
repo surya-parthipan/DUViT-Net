@@ -36,8 +36,11 @@ This repository contains the implementation of **DUViT-Net**, a hybrid deep lear
 ### Dataset Details
 The dataset used in this project is sourced from the **Medical Segmentation Decathlon (MSD)** dataset:
 - **Task 01**: Brain Tumor Segmentation  
+![Task01_BrainTumour](images_op/bt_sample.jpg "Task01_BrainTumour Sample Visualization")
 - **Task 02**: Heart (Left Atrium) Segmentation  
+![Task02_Heart](images_op/ht_sample.jpg "Task02_Heart Sample Visualization")
 - **Task 04**: Hippocampus Segmentation  
+![Task04_HippoCampus](images_op/hc_sample.jpg "Task04_HippoCampus Sample Visualization")
 
 Refer to `task_config.yaml` for detailed configurations, including:
 - Imaging Modalities  
@@ -130,7 +133,15 @@ Visualize segmentation results using the provided Jupyter Notebook:
 ```bash
 jupyter notebook vis_seg.ipynb
 ```
-This will generate overlays of ground truth vs. predicted masks for qualitative analysis. You can modify the notebook to:
+This will generate overlays of ground truth vs. predicted masks for qualitative analysis.
+
+![Task01_BrainTumour](images_op/bt_seg1.png "Task01_BrainTumour Prediction Visualization")
+
+![Task02_Heart](images_op/ht_seg.png "Task02_Heart Prediction Visualization")
+
+![Task04_HippoCampus](images_op/hippo_seg.png "Task04_HippoCampus Prediction Visualization")
+
+You can modify the notebook to:
 - Display different color maps or slice indexes.  
 - Overlay multiple modalities if available.  
 - Save visual results to a specific directory.
